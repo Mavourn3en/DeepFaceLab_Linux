@@ -108,49 +108,52 @@ class DFLJPG(object):
             
             return inst
         except Exception as e:
-            raise Exception("Corrupted JPG file: %s" % (str(e)))
-            
-        return None
-        
+            raise Exception ("Corrupted JPG file: %s" % (str(e)))
+ 
     @staticmethod
     def load(filename):
-        inst = DFLJPG.load_raw (filename)
-        inst.dfl_dict = None
-        
-        for chunk in inst.chunks:
-            if chunk['name'] == 'APP0':
-                d, c = chunk['data'], 0
-                c, id, _ = struct_unpack (d, c, "=4sB")
-                
-                if id == b"JFIF":
-                    c, ver_major, ver_minor, units, Xdensity, Ydensity, Xthumbnail, Ythumbnail = struct_unpack (d, c, "=BBBHHBB")
-                    #if units == 0:
-                    #    inst.shape = (Ydensity, Xdensity, 3)
-                else:
-                    raise Exception("Unknown jpeg ID: %s" % (id) )
-            elif chunk['name'] == 'SOF0' or chunk['name'] == 'SOF2':
-                d, c = chunk['data'], 0
-                c, precision, height, width = struct_unpack (d, c, ">BHH")
-                inst.shape = (height, width, 3)
-                
-            elif chunk['name'] == 'APP15':
-                if type(chunk['data']) == bytes:
-                    inst.dfl_dict = pickle.loads(chunk['data'])
+        try:
+            inst = DFLJPG.load_raw (filename)
+            inst.dfl_dict = None
+            
+            for chunk in inst.chunks:
+                if chunk['name'] == 'APP0':
+                    d, c = chunk['data'], 0
+                    c, id, _ = struct_unpack (d, c, "=4sB")
+                    
+                    if id == b"JFIF":
+                        c, ver_major, ver_minor, units, Xdensity, Ydensity, Xthumbnail, Ythumbnail = struct_unpack (d, c, "=BBBHHBB")
+                        #if units == 0:
+                        #    inst.shape = (Ydensity, Xdensity, 3)
+                    else:
+                        raise Exception("Unknown jpeg ID: %s" % (id) )
+                elif chunk['name'] == 'SOF0' or chunk['name'] == 'SOF2':
+                    d, c = chunk['data'], 0
+                    c, precision, height, width = struct_unpack (d, c, ">BHH")
+                    inst.shape = (height, width, 3)
+                    
+                elif chunk['name'] == 'APP15':
+                    if type(chunk['data']) == bytes:
+                        inst.dfl_dict = pickle.loads(chunk['data'])
 
-        if (inst.dfl_dict is not None) and ('face_type' not in inst.dfl_dict.keys()):
-            inst.dfl_dict['face_type'] = FaceType.toString (FaceType.FULL)
-        
-        if inst.dfl_dict == None:
+            if (inst.dfl_dict is not None) and ('face_type' not in inst.dfl_dict.keys()):
+                inst.dfl_dict['face_type'] = FaceType.toString (FaceType.FULL)
+            
+            if inst.dfl_dict == None:
+                return None
+            
+            return inst
+        except Exception as e:
+            print (e)
             return None
         
-        return inst
-
     @staticmethod
     def embed_data(filename, face_type=None,
                              landmarks=None,
                              source_filename=None,
                              source_rect=None,
-                             source_landmarks=None
+                             source_landmarks=None,
+                             image_to_face_mat=None
                    ):
     
         inst = DFLJPG.load_raw (filename)
@@ -159,7 +162,8 @@ class DFLJPG(object):
                                 'landmarks': landmarks,
                                 'source_filename': source_filename,
                                 'source_rect': source_rect,
-                                'source_landmarks': source_landmarks
+                                'source_landmarks': source_landmarks,
+                                'image_to_face_mat': image_to_face_mat
                              })
     
         try:

@@ -3,8 +3,13 @@ import sys
 import contextlib
 import numpy as np
 
+from .CAInitializer import CAGenerateWeights
+import multiprocessing
+from joblib import Subprocessor
+
 from utils import std_utils
 from .device import device
+from interact import interact as io
 
 class nnlib(object):
     device = device #forwards nnlib.devicelib to device in order to use nnlib as standalone lib
@@ -71,7 +76,6 @@ ZeroPadding2D = keras.layers.ZeroPadding2D
 RandomNormal = keras.initializers.RandomNormal
 Model = keras.models.Model
 
-#Adam = keras.optimizers.Adam
 Adam = nnlib.Adam
 
 modelify = nnlib.modelify
@@ -82,6 +86,7 @@ dssim = nnlib.dssim
 PixelShuffler = nnlib.PixelShuffler
 SubpixelUpscaler = nnlib.SubpixelUpscaler
 Scale = nnlib.Scale
+CAInitializerMP = nnlib.CAInitializerMP
 
 #ReflectionPadding2D = nnlib.ReflectionPadding2D
 #AddUniformNoise = nnlib.AddUniformNoise
@@ -91,7 +96,6 @@ Scale = nnlib.Scale
 keras_contrib = nnlib.keras_contrib
 GroupNormalization = keras_contrib.layers.GroupNormalization
 InstanceNormalization = keras_contrib.layers.InstanceNormalization
-Padam = keras_contrib.optimizers.Padam
 """
     code_import_dlib_string = \
 """
@@ -497,7 +501,7 @@ NLayerDiscriminator = nnlib.NLayerDiscriminator
 
                 for p, g, m, v, vhat in zip(params, grads, ms, vs, vhats):            
                     e = K.tf.device("/cpu:0") if self.tf_cpu_mode == 2 else None
-                    if e: e.__enter__()            
+                    if e: e.__enter__()
                     m_t = (self.beta_1 * m) + (1. - self.beta_1) * g
                     v_t = (self.beta_2 * v) + (1. - self.beta_2) * K.square(g)
                     
@@ -532,6 +536,15 @@ NLayerDiscriminator = nnlib.NLayerDiscriminator
                 base_config = super(Adam, self).get_config()
                 return dict(list(base_config.items()) + list(config.items()))
         nnlib.Adam = Adam
+
+        def CAInitializerMP( conv_weights_list ):            
+            result = CAInitializerMPSubprocessor ( [ (i, K.int_shape(conv_weights)) for i, conv_weights in enumerate(conv_weights_list) ], K.floatx(), K.image_data_format() ).run()
+            for idx, weights in result:
+                K.set_value ( conv_weights_list[idx], weights )
+            
+        nnlib.CAInitializerMP = CAInitializerMP
+            
+      
         '''
         not implemented in plaidML
         class ReflectionPadding2D(keras.layers.Layer):
@@ -812,5 +825,71 @@ NLayerDiscriminator = nnlib.NLayerDiscriminator
         if nnlib.tf is not None:
             nnlib.tf_sess = None
             nnlib.tf = None
+     
+    
+class CAInitializerMPSubprocessor(Subprocessor):
+    class Cli(Subprocessor.Cli):
+    
+        #override
+        def on_initialize(self, client_dict):
+            self.floatx = client_dict['floatx']
+            self.data_format = client_dict['data_format']
 
+        #override
+        def process_data(self, data):
+            idx, shape = data            
+            weights = CAGenerateWeights (shape, self.floatx, self.data_format)
+            return idx, weights
 
+        #override
+        def get_data_name (self, data):
+            #return string identificator of your data
+            return "undefined"
+            
+    #override
+    def __init__(self, idx_shapes_list, floatx, data_format ):
+    
+        self.idx_shapes_list = idx_shapes_list
+        self.floatx = floatx
+        self.data_format = data_format
+        
+        self.result = []
+        super().__init__('CAInitializerMP', CAInitializerMPSubprocessor.Cli)
+
+    #override
+    def on_clients_initialized(self):
+        io.progress_bar ("Processing", len (self.idx_shapes_list))
+        
+    #override
+    def on_clients_finalized(self):
+        io.progress_bar_close()
+        
+    #override
+    def process_info_generator(self):    
+        for i in range(multiprocessing.cpu_count()):
+            yield 'CPU%d' % (i), {}, {'device_idx': i,
+                                      'device_name': 'CPU%d' % (i), 
+                                      'floatx' : self.floatx,
+                                      'data_format' : self.data_format
+                                      }
+
+    #override
+    def get_data(self, host_dict):
+        if len (self.idx_shapes_list) > 0:
+            return self.idx_shapes_list.pop(0)    
+        
+        return None
+    
+    #override
+    def on_data_return (self, host_dict, data):
+        self.idx_shapes_list.insert(0, data)   
+
+    #override
+    def on_result (self, host_dict, data, result):
+        self.result.append ( result )
+        io.progress_bar_inc(1)
+        
+    #override
+    def get_result(self):
+        return self.result
+        
